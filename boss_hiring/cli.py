@@ -32,6 +32,7 @@ def api_request(
     *,
     state_dir: Path | None = None,
     query: dict[str, str | int] | None = None,
+    body: dict[str, Any] | None = None,
 ) -> JSONResponse:
     base_url = os.environ.get("BOSS_BASE_URL", f"http://127.0.0.1:{DEFAULT_PORT}")
     match = re.fullmatch(r"http://(?:127\.0\.0\.1|localhost)(?::([0-9]{1,5}))?/?", base_url, re.IGNORECASE)
@@ -55,7 +56,7 @@ def api_request(
     data = None
     if method == "POST":
         headers["Content-Type"] = "application/json"
-        data = b"{}"
+        data = json.dumps(body or {}, ensure_ascii=False).encode()
     request = Request(url, data=data, headers=headers, method=method)
     opener = build_opener(ProxyHandler({}), NoRedirects())
     try:

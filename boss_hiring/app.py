@@ -4,9 +4,9 @@ import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -192,6 +192,19 @@ def create_app(state_dir=None, browser=None):
     @app.get("/api/matching/latest")
     async def latest_matching():
         return store.latest_match()
+
+    @app.get("/api/matching/summary")
+    async def matching_summary(request: Request, limit: Annotated[int, Query(ge=1, le=50)] = 10):
+        task = next((task for task in store.tasks() if task["kind"] == "match"), None)
+        match = store.latest_match()
+        result = None
+        if match:
+            result = {key: match[key] for key in ("id", "created_at", "scope", "stale", "candidate_count", "collection_notice")}
+            keys = ("id", "title", "company", "city", "salary", "url", "collected_at", "tier", "checks", "stale")
+            result["jobs"] = [{key: job[key] for key in keys} for job in match["jobs"][:limit]]
+            result["error_count"] = len(match["errors"])
+            result["result_count"] = len(match["jobs"])
+        return {"task": task, "result": result, "workbench": str(request.base_url)}
 
     @app.get("/api/tasks")
     async def tasks():
