@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from .config import SearchSettings
+from .matching import hard_conditions
 
 FIELDS = ("job_key", "url", "title", "company", "city", "salary", "experience", "education", "description", "recruiter")
 ITEM_STATES = {"pending", "sending", "greeted", "resume_sent", "dry_run", "skipped", "uncertain", "blocked"}
@@ -96,6 +97,8 @@ class Store:
                     status TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS match_runs (id TEXT PRIMARY KEY, profile_version TEXT NOT NULL,
                     data TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS match_shortlists (batch_id INTEGER PRIMARY KEY, run_id TEXT NOT NULL,
+                    preferences TEXT NOT NULL, FOREIGN KEY(batch_id) REFERENCES batches(id));
             """)
 
     @contextmanager
@@ -180,7 +183,7 @@ class Store:
             conn.execute("INSERT OR REPLACE INTO meta VALUES ('paused',?)", ("1" if value else "0",))
         self.event("pause" if value else "resume", "已暂停后续操作" if value else "已解除暂停；需要手动继续原清单")
 
-    def eligibility(self, job, settings=None):
+    def eligibility(self, job, settings=None, *, preferences=None):
         settings = settings or self.settings()
         if job["city"] not in settings["cities"]:
             return False, "岗位实际城市不在所选范围，或尚未确认"
@@ -188,6 +191,9 @@ class Store:
             return False, "缺少职位详情或招聘者，请先补全采集"
         if any(word.casefold() in job["company"].casefold() for word in settings["exclude_companies"]):
             return False, "公司命中排除条件"
+        if preferences is not None:
+            allowed, _ = hard_conditions(job, preferences, settings)
+            return allowed, "已从简历匹配选入" if allowed else "岗位不符合本清单的求职偏好"
         haystack = " ".join(str(job.get(k, "")) for k in ("title", "description", "tags")).casefold()
         hits = [word for word in settings["keywords"] if word.casefold() in haystack]
         if not hits:
@@ -229,7 +235,12 @@ class Store:
             raise ValueError("岗位不存在")
         return {**json.loads(row["data"]), "id": row["id"], "collected_at": row["collected_at"]}
 
-    def create_batch(self, ids, action, message, resume_name, mode):
+    @staticmethod
+    def _batch_preferences(conn, batch_id):
+        row = conn.execute("SELECT preferences FROM match_shortlists WHERE batch_id=?", (batch_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def create_batch(self, ids, action, message, resume_name, mode, match_run_id=None):
         if not ids or len(ids) > 100 or len(set(ids)) != len(ids):
             raise ValueError("请选择 1–100 个不重复的岗位")
         if action not in {"start_chat", "greet", "resume"} or mode not in {"dry_run", "live"}:
@@ -240,22 +251,41 @@ class Store:
             raise ValueError("请填写 BOSS 账号中已有附件简历的完整名称")
         settings = self.settings()
         with self.connection(True) as conn:
+            preferences, recommendations = None, {}
+            if match_run_id is not None:
+                run = conn.execute("SELECT * FROM match_runs WHERE id=?", (match_run_id,)).fetchone()
+                profile = self._profile(conn)
+                if not run or not profile or profile["version"] != run["profile_version"]:
+                    raise ValueError("推荐已过期，请重新匹配")
+                result = json.loads(run["data"])
+                if any(settings.get(key) != value for key, value in result.get("filters", {}).items()):
+                    raise ValueError("筛选条件已更新，请重新匹配")
+                preferences = result["preferences"]
+                recommendations = {item["id"]: item for item in result["jobs"]}
             snapshots = []
             for job_id in ids:
                 row = conn.execute("SELECT data FROM jobs WHERE id=?", (job_id,)).fetchone()
                 if not row:
                     raise ValueError(f"岗位 {job_id} 不存在")
                 snapshot = json.loads(row[0])
-                eligible, reason = self.eligibility(snapshot, settings)
+                if preferences is not None:
+                    recommendation = recommendations.get(job_id)
+                    if not recommendation or job_fingerprint(snapshot) != recommendation["fingerprint"]:
+                        raise ValueError("所选岗位不在本次推荐中或已有变更，请重新匹配")
+                    snapshot["match_checks"] = recommendation["checks"]
+                eligible, reason = self.eligibility(snapshot, settings, preferences=preferences)
                 if not eligible:
                     raise ValueError(f"{snapshot['title']}：{reason}")
                 snapshots.append(snapshot)
             digest = hashlib.sha256(json_text(dict(ids=ids, jobs=snapshots, action=action, message=message,
-                                                  resume_name=resume_name, mode=mode)).encode()).hexdigest()
+                                                  resume_name=resume_name, mode=mode, match_run_id=match_run_id,
+                                                  match_preferences=preferences)).encode()).hexdigest()
             batch_id = conn.execute("INSERT INTO batches(digest,status,action,message,resume_name,mode,created_at) VALUES(?,'draft',?,?,?,?,?)",
                                     (digest, action, message, resume_name, mode, now())).lastrowid
             conn.executemany("INSERT INTO items(batch_id,job_id,snapshot) VALUES(?,?,?)",
                              [(batch_id, job_id, json_text(snapshot)) for job_id, snapshot in zip(ids, snapshots)])
+            if preferences is not None:
+                conn.execute("INSERT INTO match_shortlists VALUES (?,?,?)", (batch_id, match_run_id, json_text(preferences)))
         self.event("batch", f"已创建清单 #{batch_id}，模式 {mode}，{len(ids)} 个岗位")
         return self.batch(batch_id)
 
@@ -265,6 +295,7 @@ class Store:
             if not row:
                 raise KeyError("清单不存在")
             result = dict(row)
+            result["match_preferences"] = self._batch_preferences(conn, batch_id)
             result["items"] = []
             for item in conn.execute("SELECT * FROM items WHERE batch_id=? ORDER BY id", (batch_id,)):
                 item = dict(item)
@@ -311,7 +342,7 @@ class Store:
             setting_row = conn.execute("SELECT value FROM meta WHERE key='settings'").fetchone()
             settings = SearchSettings.model_validate_json(setting_row[0]).model_dump() if setting_row else SearchSettings().model_dump()
             snapshot = json.loads(row["snapshot"])
-            eligible, reason = self.eligibility(snapshot, settings)
+            eligible, reason = self.eligibility(snapshot, settings, preferences=self._batch_preferences(conn, row["batch_id"]))
             latest = conn.execute("SELECT data FROM jobs WHERE id=?", (row["job_id"],)).fetchone()
             if not eligible or not latest or job_fingerprint(json.loads(latest[0])) != job_fingerprint(snapshot):
                 raise ChangedConstraints(reason if not eligible else "岗位内容已变化，请重新建立清单")
@@ -344,12 +375,12 @@ class Store:
         with self.connection(True) as conn:
             setting_row = conn.execute("SELECT value FROM meta WHERE key='settings'").fetchone()
             settings = SearchSettings.model_validate_json(setting_row[0]).model_dump() if setting_row else SearchSettings().model_dump()
-            eligible, _ = self.eligibility(job, settings)
+            own = conn.execute("SELECT a.id,i.status,i.batch_id FROM attempts a JOIN items i ON i.id=a.item_id WHERE a.item_id=?", (item_id,)).fetchone()
+            if not own or own["status"] != "sending":
+                return False
+            eligible, _ = self.eligibility(job, settings, preferences=self._batch_preferences(conn, own["batch_id"]))
             latest = conn.execute("SELECT data FROM jobs WHERE id=?", (job["id"],)).fetchone()
             if not eligible or not latest or job_fingerprint(json.loads(latest[0])) != job_fingerprint(job):
-                return False
-            own = conn.execute("SELECT a.id,i.status FROM attempts a JOIN items i ON i.id=a.item_id WHERE a.item_id=?", (item_id,)).fetchone()
-            if not own or own["status"] != "sending":
                 return False
             instant = now()
             local_day = datetime.fromisoformat(instant).astimezone(ZoneInfo("Asia/Shanghai")).date().isoformat()

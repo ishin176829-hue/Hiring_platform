@@ -142,7 +142,15 @@
           </section>
           <section class="surface" aria-label="简历匹配结果">
             <header class="surface-heading"><h2>推荐岗位</h2><p id="match-summary" aria-live="polite"></p></header>
+            <div class="toolbar" aria-label="筛选推荐">
+              <label>城市<select id="match-city-filter"><option value="">全部</option><option>杭州</option><option>上海</option></select></label>
+              <label>推荐等级<select id="match-tier-filter"><option value="">全部</option><option value="priority">优先看</option><option value="consider">可考虑</option><option value="verify">需核对</option></select></label>
+            </div>
             <div class="surface-heading" id="match-results"></div>
+            <div class="selection-bar">
+              <span id="match-selection">已选 0 个岗位</span>
+              <button id="match-draft" type="button" class="button primary" disabled>创建投递草稿</button>
+            </div>
           </section>
         </section>
 

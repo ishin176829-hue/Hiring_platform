@@ -29,6 +29,7 @@ class BatchInput(Empty):
     message: str = Field(default="", max_length=1000)
     resume_name: str = Field(default="", max_length=200)
     mode: Literal["dry_run", "live"] = "dry_run"
+    match_run_id: str | None = Field(default=None, min_length=32, max_length=32, pattern=r"^[a-f0-9]{32}$")
 
 
 class ApproveInput(Empty):
@@ -199,7 +200,7 @@ def create_app(state_dir=None, browser=None):
 
     @app.post("/api/batches")
     async def create_batch(body: BatchInput):
-        return store.create_batch(body.job_ids, body.action, body.message, body.resume_name, body.mode)
+        return store.create_batch(body.job_ids, body.action, body.message, body.resume_name, body.mode, body.match_run_id)
 
     @app.get("/api/batches")
     async def batches():

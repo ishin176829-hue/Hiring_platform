@@ -175,6 +175,7 @@ function updateControls() {
   byId('match-run').disabled = unavailable || taskRunning || isPaused;
   byId('match-search').disabled = byId('match-run').disabled;
   byId('match-suggest').disabled = unavailable;
+  byId('match-draft').disabled = unavailable || !matchSelected.size;
   byId('settings-save').disabled = unavailable || !settingsInitialized || !settingsDirty;
   byId('draft-button').disabled = unavailable || !selected.size;
   byId('draft-submit').disabled = unavailable;
@@ -466,6 +467,7 @@ function batchItem(item, open) {
   const role = el('span', undefined, 'batch-role');
   role.append(el('strong', job.title || '岗位待确认'),
     el('span', [job.company, job.city, job.recruiter || '招聘者待确认'].filter(Boolean).join(' · '), 'muted'));
+  if (job.match_checks?.length) role.append(el('span', job.match_checks.join('、'), 'muted'));
   summary.append(role, badge(item.status));
   panel.append(summary);
   if (item.detail) panel.append(el('p', readableDetail(item.detail, '请在任务记录中核对进度。'), 'item-detail'));
@@ -613,12 +615,20 @@ async function createBatch() {
   if (action === 'greet' && !message.trim()) throw new Error('请填写完整的问候语。');
   if (action === 'resume' && !resumeName.trim()) throw new Error('请填写已有附件简历的名称。');
   const mode = new FormData(byId('draft-form')).get('mode');
+  const choice = matchDraftChoice;
   const batch = await post('/batches', {
-    job_ids: Array.from(selected), action, message, resume_name: resumeName, mode,
+    job_ids: choice?.ids ?? Array.from(selected), action, message, resume_name: resumeName, mode,
+    ...(choice ? {match_run_id: choice.runId} : {}),
   });
+  matchDraftChoice = null;
   byId('draft-dialog').close();
-  selected.clear();
-  renderSelection();
+  if (choice) {
+    matchSelected.clear();
+    rendered.delete('matching');
+  } else {
+    selected.clear();
+    renderSelection();
+  }
   navigate('batches', {load: false});
   openBatch(batch);
   await loadBatches().catch(error => showNotice(error.message, 'bad', 'batch-notice'));
@@ -700,6 +710,7 @@ byId('clear-selection').addEventListener('click', () => {
   renderSelection();
 });
 byId('draft-button').addEventListener('click', () => {
+  matchDraftChoice = null;
   text('draft-count', `${selected.size} 个候选岗位。生成后可逐项检查清单快照。`);
   byId('draft-form').reset();
   updateDraftFields();
@@ -756,6 +767,15 @@ const evidenceKind = {core: '核心职责', must: '必备条件', bonus: '加分
 let matchReady = false;
 let matchDirty = false;
 let profileVersion = null;
+let matchRunId = null;
+const matchSelected = new Set();
+let matchDraftChoice = null;
+let latestMatching = null;
+
+function updateMatchSelection() {
+  text('match-selection', `已选 ${matchSelected.size} 个岗位`);
+  updateControls();
+}
 
 function fillMatchProfile(profile) {
   byId('match-profile').reset();
@@ -799,11 +819,19 @@ async function saveMatchProfile() {
 }
 
 function renderMatching(result) {
-  const signature = JSON.stringify(result);
+  latestMatching = result;
+  const city = byId('match-city-filter').value;
+  const tier = byId('match-tier-filter').value;
+  const signature = JSON.stringify([result, city, tier]);
   if (rendered.get('matching') === signature) return;
   rendered.set('matching', signature);
+  if (matchRunId !== (result?.id ?? null) || result?.stale) matchSelected.clear();
+  matchRunId = result?.id ?? null;
+  const valid = new Set((result?.jobs ?? []).filter(job => job.can_draft && !job.stale && !result.stale).map(job => job.id));
+  for (const id of matchSelected) if (!valid.has(id)) matchSelected.delete(id);
   const rows = [];
   for (const job of result?.jobs ?? []) {
+    if ((city && job.city !== city) || (tier && job.tier !== tier)) continue;
     const detail = el('details');
     detail.append(el('summary', `${matchTier[job.tier]} · ${job.title} · ${job.company} · ${job.city || '城市待核对'} · ${job.salary || '薪资待核对'}`));
     const source = el('a', 'BOSS 岗位原页');
@@ -811,6 +839,19 @@ function renderMatching(result) {
     source.target = '_blank';
     source.rel = 'noopener noreferrer';
     detail.append(source, el('p', `采集于 ${formatTime(job.collected_at)} · ${statusLabel(job.contact_status)}`));
+    const selectLabel = el('label', undefined, 'choice');
+    const checkbox = el('input');
+    checkbox.type = 'checkbox';
+    checkbox.disabled = !valid.has(job.id);
+    checkbox.checked = matchSelected.has(job.id);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) matchSelected.add(job.id);
+      else matchSelected.delete(job.id);
+      updateMatchSelection();
+    });
+    selectLabel.append(checkbox, ` 选择 ${job.title}`);
+    detail.append(selectLabel);
+    if (job.draft_reason) detail.append(el('p', job.draft_reason));
     if (job.stale) detail.append(el('p', '岗位有变更，请重新匹配。'));
     for (const check of job.checks) detail.append(el('p', check));
     for (const item of job.evidence) {
@@ -819,6 +860,7 @@ function renderMatching(result) {
     }
     rows.push(detail);
   }
+  if (result?.jobs.length && !rows.length) rows.push(el('p', '当前筛选条件下没有推荐。'));
   for (const failure of result?.errors ?? []) rows.push(el('p', `${failure.title} · ${failure.reason}`));
   if (result?.unprocessed) rows.push(el('p', `还有 ${result.unprocessed} 条未评估，恢复后可重新匹配。`));
   byId('match-results').replaceChildren(...rows);
@@ -826,6 +868,7 @@ function renderMatching(result) {
   const scope = result?.scope === 'updated' ? '已合并本次采集与已有岗位' : '仅基于已有岗位';
   text('match-summary', result ? `${stale}${scope}，${result.jobs.length} 条推荐 · ${formatTime(result.created_at)}` : '保存简历后即可开始匹配。');
   if (result?.collection_notice) byId('match-results').prepend(el('p', result.collection_notice));
+  updateMatchSelection();
 }
 
 async function loadMatching() {
@@ -889,6 +932,16 @@ function setupMatching() {
       showNotice('简历与推荐已删除。', 'good');
     });
   });
+  byId('match-draft').addEventListener('click', () => {
+    matchDraftChoice = {runId: matchRunId, ids: Array.from(matchSelected)};
+    text('draft-count', `${matchSelected.size} 个推荐岗位。生成后可逐项检查清单快照。`);
+    byId('draft-form').reset();
+    updateDraftFields();
+    showNotice('', 'neutral', 'draft-notice');
+    byId('draft-dialog').showModal();
+  });
+  byId('match-city-filter').addEventListener('change', () => renderMatching(latestMatching));
+  byId('match-tier-filter').addEventListener('change', () => renderMatching(latestMatching));
 }
 
 // Match controls share the same refresh and mutation lifecycle.
