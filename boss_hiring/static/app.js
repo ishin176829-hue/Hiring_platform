@@ -173,6 +173,8 @@ function updateControls() {
   byId('browser-open').disabled = unavailable || taskRunning;
   byId('screenshot-button').disabled = unavailable || browserStatus === 'closed';
   byId('match-run').disabled = unavailable || taskRunning || isPaused;
+  byId('match-search').disabled = byId('match-run').disabled;
+  byId('match-suggest').disabled = unavailable;
   byId('settings-save').disabled = unavailable || !settingsInitialized || !settingsDirty;
   byId('draft-button').disabled = unavailable || !selected.size;
   byId('draft-submit').disabled = unavailable;
@@ -753,6 +755,7 @@ const evidenceState = {supported: '有证据', partial: '部分相关', unknown:
 const evidenceKind = {core: '核心职责', must: '必备条件', bonus: '加分项'};
 let matchReady = false;
 let matchDirty = false;
+let profileVersion = null;
 
 function fillMatchProfile(profile) {
   byId('match-profile').reset();
@@ -768,6 +771,12 @@ function fillMatchProfile(profile) {
     byId(`match-field-${name}`).value = (profile?.fields?.[name] ?? []).map(row => row.value).join('\n');
   }
   byId('match-fields').open = Boolean(profile);
+  if (profileVersion !== (profile?.version ?? null)) {
+    byId('match-directions').replaceChildren();
+    byId('match-directions').hidden = true;
+    byId('match-keywords').value = '';
+  }
+  profileVersion = profile?.version ?? null;
   matchReady = true;
   matchDirty = false;
 }
@@ -814,7 +823,9 @@ function renderMatching(result) {
   if (result?.unprocessed) rows.push(el('p', `还有 ${result.unprocessed} 条未评估，恢复后可重新匹配。`));
   byId('match-results').replaceChildren(...rows);
   const stale = result?.stale ? '简历或偏好有变更，请重新匹配。' : '';
-  text('match-summary', result ? `${stale}基于已有岗位，${result.jobs.length} 条推荐 · ${formatTime(result.created_at)}` : '保存简历后即可开始匹配。');
+  const scope = result?.scope === 'updated' ? '已合并本次采集与已有岗位' : '仅基于已有岗位';
+  text('match-summary', result ? `${stale}${scope}，${result.jobs.length} 条推荐 · ${formatTime(result.created_at)}` : '保存简历后即可开始匹配。');
+  if (result?.collection_notice) byId('match-results').prepend(el('p', result.collection_notice));
 }
 
 async function loadMatching() {
@@ -847,9 +858,26 @@ function setupMatching() {
     showNotice('请核对并保存提取结果。', 'good');
   }));
   byId('match-run').addEventListener('click', () => mutate(async () => {
-    if (!matchReady || matchDirty) throw new Error('请先保存当前简历与偏好。');
+    if (!profileVersion || matchDirty) throw new Error('请先保存当前简历与偏好。');
     await post('/matching/run');
     showNotice('匹配任务已提交，可在「任务与活动」查看进度。');
+    await loadStatus();
+  }));
+  byId('match-suggest').addEventListener('click', () => mutate(async () => {
+    if (!profileVersion || matchDirty) throw new Error('请先保存当前简历与偏好。');
+    const result = await post('/matching/suggestions');
+    if (result.profile_version !== profileVersion || matchDirty) throw new Error('简历已更改，请重新生成搜索方向。');
+    const list = byId('match-directions');
+    list.replaceChildren(...result.directions.map(item => el('li', `${item.title} · ${item.keyword} · 简历依据「${item.excerpt}」`)));
+    list.hidden = false;
+    byId('match-keywords').value = result.directions.map(item => item.keyword).join('\n');
+  }));
+  byId('match-search').addEventListener('click', () => mutate(async () => {
+    if (!profileVersion || matchDirty) throw new Error('请先保存当前简历与偏好。');
+    const keywords = lines('match-keywords');
+    if (!keywords.length) throw new Error('请填写本次搜索词。');
+    await post('/matching/run', {keywords});
+    showNotice('采集与匹配任务已提交，可在「任务与活动」查看进度。');
     await loadStatus();
   }));
   byId('match-delete').addEventListener('click', () => {

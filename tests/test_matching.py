@@ -77,3 +77,51 @@ def test_match_existing_jobs_routes_validate_quotes_and_do_not_send(tmp_path, mo
         client.delete("/api/matching/profile").raise_for_status()
         assert client.get("/api/matching/profile").json() is None
         assert client.get("/api/matching/latest").json() is None
+
+
+def test_resume_search_keeps_global_keywords_and_falls_back_to_existing_jobs(tmp_path, monkeypatch):
+    quote = "工作流交付"
+    calls = []
+
+    class SearchBrowser(Browser):
+        async def collect(self, cities, keywords, limit):
+            calls.append((cities, keywords, limit))
+            if len(calls) == 2:
+                raise ValueError("未登录")
+            return [job("same", "杭州", quote), job("new", "杭州", quote)]
+
+    async def model(consent, instructions, data):
+        if "jd" not in data:
+            return {"directions": [{"title": "企业流程", "keyword": "工作流工程师", "excerpt": quote},
+                                   {"title": "虚构能力", "keyword": "模型训练", "excerpt": "无原文"}]}
+        return {"items": [{"kind": "core", "status": "supported", "jd_excerpt": quote, "resume_excerpt": quote}]}
+
+    monkeypatch.setattr("boss_hiring.matching.ask_model", model)
+    app = create_app(tmp_path, browser=SearchBrowser())
+
+    async def finish():
+        await app.state.service.task
+
+    with TestClient(app) as client:
+        client.headers["Authorization"] = "Bearer " + app.state.config.token
+        saved = client.put("/api/matching/profile", json={"text": quote, "external_consent": True, "cities": ["杭州"]}).json()
+        client.post("/api/jobs/import", json={"jobs": [job("same", "杭州", quote)]}).raise_for_status()
+        settings = client.get("/api/settings").json()
+        suggestions = client.post("/api/matching/suggestions", json={}).json()
+        assert suggestions["profile_version"] == saved["version"]
+        assert [item["keyword"] for item in suggestions["directions"]] == ["工作流工程师"]
+        assert client.post("/api/matching/run", json={"keywords": []}).status_code == 422
+        client.post("/api/matching/run", json={"keywords": [" 企业流程开发 "]}).raise_for_status()
+        client.portal.call(finish)
+        result = client.get("/api/matching/latest").json()
+        assert calls[0] == (["杭州"], ["企业流程开发"], settings["collect_limit"])
+        assert result["scope"] == "updated"
+        assert result["keywords"] == ["企业流程开发"]
+        assert len(result["jobs"]) == 2
+        assert client.get("/api/settings").json() == settings
+        client.post("/api/matching/run", json={"keywords": ["企业流程开发"]}).raise_for_status()
+        client.portal.call(finish)
+        result = client.get("/api/matching/latest").json()
+        assert result["scope"] == "existing"
+        assert result["collection_notice"]
+        assert len(result["jobs"]) == 2

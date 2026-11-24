@@ -68,21 +68,35 @@ class Service:
         self.task = asyncio.create_task(self._collect(task_id))
         return task_id
 
-    def start_matching(self):
+    def start_matching(self, keywords=None):
         self._available()
         profile = self.store.match_profile()
         if not profile:
             raise ValueError("请先在工作台填写并保存简历")
         if not profile["external_consent"]:
             raise ValueError("请先在工作台允许使用所配置的模型")
+        settings = self.store.settings()
+        cities = [city for city in profile["cities"] if city in settings["cities"]]
+        if not cities:
+            raise ValueError("求职城市与工作台采集城市没有交集，请检查设置")
         task_id = self.store.new_task("match")
         self.active_id = task_id
-        self.task = asyncio.create_task(self._match(task_id, profile))
+        self.task = asyncio.create_task(self._match(task_id, profile, settings, cities, keywords))
         return task_id
 
-    async def _match(self, task_id, profile):
+    async def _match(self, task_id, profile, settings, cities, keywords):
         try:
-            settings = self.store.settings()
+            scope, collection_notice = "existing", ""
+            if keywords:
+                try:
+                    jobs = await self.browser.collect(cities, keywords, settings["collect_limit"])
+                    if jobs:
+                        self.store.upsert_jobs(jobs)
+                        scope = "updated"
+                    else:
+                        collection_notice = "本次采集没有可核实的岗位，仅使用已有岗位。"
+                except Exception as exc:
+                    collection_notice = f"本次采集未完成，仅使用已有岗位。{self._error(exc)}"
             candidates = candidate_jobs(self.store.list_jobs(), profile, settings)
             results, errors = [], []
             consecutive_errors = 0
@@ -104,8 +118,9 @@ class Service:
                 results.append({**fields, **assessment, "fingerprint": job_fingerprint(job)})
             results.sort(key=lambda item: (-TIERS[item["tier"]], item["core_coverage"], item["bonus_hits"], item["collected_at"], item["id"]), reverse=True)
             preferences = {key: profile[key] for key in ("cities", "min_salary_k", "outsourcing", "exclude_companies")}
-            result = {"scope": "existing", "rule_version": RANKING_VERSION, "jobs": results, "errors": errors,
-                      "preferences": preferences, "keywords": [], "candidate_count": len(candidates),
+            result = {"scope": scope, "rule_version": RANKING_VERSION, "jobs": results, "errors": errors,
+                      "preferences": preferences, "keywords": keywords or [], "candidate_count": len(candidates),
+                      "collection_notice": collection_notice,
                       "filters": {key: settings[key] for key in ("cities", "exclude_companies")},
                       "unprocessed": len(candidates) - len(results) - len(errors)}
             if not self.store.save_match(task_id, profile["version"], result):
@@ -114,7 +129,7 @@ class Service:
             failure = f"，{len(errors)} 条待重试" if errors else ""
             state = "blocked" if errors and not results else "completed"
             detail = f"匹配完成，{len(results)} 条岗位{failure}" if candidates else "目前没有符合条件的可匹配岗位"
-            self.store.finish_task(task_id, state, detail)
+            self.store.finish_task(task_id, state, f"{collection_notice}{detail}")
         except asyncio.CancelledError:
             self.store.finish_task(task_id, "interrupted", "简历匹配已中止")
             raise

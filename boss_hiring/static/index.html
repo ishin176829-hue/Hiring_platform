@@ -133,6 +133,13 @@
               <button type="button" id="match-delete" class="button">删除简历与推荐</button>
             </div>
           </form>
+          <section class="surface surface-heading settings-form" aria-labelledby="match-search-heading">
+            <h2 id="match-search-heading">搜索新岗位</h2>
+            <button type="button" class="button" id="match-suggest">生成搜索方向</button>
+            <ul id="match-directions" hidden></ul>
+            <label>本次搜索词，每行一个<textarea id="match-keywords" rows="4"></textarea></label>
+            <button type="button" class="button" id="match-search">更新岗位并匹配</button>
+          </section>
           <section class="surface" aria-label="简历匹配结果">
             <header class="surface-heading"><h2>推荐岗位</h2><p id="match-summary" aria-live="polite"></p></header>
             <div class="surface-heading" id="match-results"></div>
