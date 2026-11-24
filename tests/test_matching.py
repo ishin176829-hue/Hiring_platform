@@ -125,3 +125,54 @@ def test_resume_search_keeps_global_keywords_and_falls_back_to_existing_jobs(tmp
         assert result["scope"] == "existing"
         assert result["collection_notice"]
         assert len(result["jobs"]) == 2
+
+
+def test_recommended_shortlist_checks_version_and_requires_normal_confirmation(tmp_path, monkeypatch):
+    quote = "工作流交付"
+    unexpected = []
+
+    class BatchBrowser(Browser):
+        async def check(self, *args):
+            return {"ok": True}
+
+        async def perform(self, *args):
+            unexpected.append("sent")
+            return {"status": "greeted"}
+
+    async def model(consent, instructions, data):
+        return {"items": [{"kind": "core", "status": "supported", "jd_excerpt": quote, "resume_excerpt": quote}]}
+
+    monkeypatch.setattr("boss_hiring.matching.ask_model", model)
+    app = create_app(tmp_path, browser=BatchBrowser())
+
+    async def finish():
+        await app.state.service.task
+
+    with TestClient(app) as client:
+        client.headers["Authorization"] = "Bearer " + app.state.config.token
+        profile = {"text": quote, "external_consent": True, "min_salary_k": 28}
+        client.put("/api/matching/profile", json=profile).raise_for_status()
+        original = job("good", "杭州", quote)
+        client.post("/api/jobs/import", json={"jobs": [original, job("outside", "北京", quote),
+                                                      job("unknown", "", quote)]}).raise_for_status()
+        job_ids = {row["job_key"]: row["id"] for row in client.get("/api/jobs").json()}
+        run = client.post("/api/matching/run", json={}).json()["task_id"]
+        client.portal.call(finish)
+        batch_body = {"job_ids": [job_ids["good"]], "action": "start_chat", "mode": "dry_run"}
+        assert client.post("/api/batches", json=batch_body).status_code == 400
+        for key in ("outside", "unknown"):
+            assert client.post("/api/batches", json={**batch_body, "job_ids": [job_ids[key]], "match_run_id": run}).status_code == 400
+        draft = client.post("/api/batches", json={**batch_body, "match_run_id": run}).json()
+        assert draft["status"] == "draft"
+        assert draft["items"][0]["job"]["match_checks"] == ["薪资区间跨过下限"]
+        assert not unexpected and app.state.store.daily_used() == 0
+        assert client.post(f"/api/batches/{draft['id']}/run", json={}).status_code == 400
+        client.post(f"/api/batches/{draft['id']}/approve", json={"digest": draft["digest"]}).raise_for_status()
+        client.post(f"/api/batches/{draft['id']}/run", json={}).raise_for_status()
+        client.portal.call(finish)
+        assert client.get(f"/api/batches/{draft['id']}").json()["items"][0]["status"] == "dry_run"
+        assert not unexpected and app.state.store.daily_used() == 0
+        client.post("/api/jobs/import", json={"jobs": [{**original, "salary": "10K"}]}).raise_for_status()
+        assert client.post("/api/batches", json={**batch_body, "match_run_id": run}).status_code == 400
+        client.put("/api/matching/profile", json={**profile, "min_salary_k": 30}).raise_for_status()
+        assert "已过期" in client.post("/api/batches", json={**batch_body, "match_run_id": run}).json()["detail"]

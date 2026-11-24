@@ -115,7 +115,9 @@ class Service:
                         break
                     continue
                 consecutive_errors = 0
-                results.append({**fields, **assessment, "fingerprint": job_fingerprint(job)})
+                eligible, reason = self.store.eligibility(job, settings, preferences=profile)
+                results.append({**fields, **assessment, "fingerprint": job_fingerprint(job),
+                                "can_draft": eligible, "draft_reason": "" if eligible else reason})
             results.sort(key=lambda item: (-TIERS[item["tier"]], item["core_coverage"], item["bonus_hits"], item["collected_at"], item["id"]), reverse=True)
             preferences = {key: profile[key] for key in ("cities", "min_salary_k", "outsourcing", "exclude_companies")}
             result = {"scope": scope, "rule_version": RANKING_VERSION, "jobs": results, "errors": errors,
@@ -184,7 +186,7 @@ class Service:
                 if not self.can_dispatch():
                     break
                 job = item["job"]
-                eligible, reason = self.store.eligibility(job)
+                eligible, reason = self.store.eligibility(job, preferences=batch["match_preferences"])
                 fresh_stored = self.store.get_job(item["job_id"])
                 if not eligible or job_fingerprint(fresh_stored) != job_fingerprint(job):
                     self.store.item_result(item["id"], "skipped", reason if not eligible else "岗位内容已变化，请重新采集并建立清单")
