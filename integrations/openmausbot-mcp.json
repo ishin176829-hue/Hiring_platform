@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "boss-hiring": {
+      "command": "/absolute/path/to/boss-hiring-mcp",
+      "args": [],
+      "env": {
+        "BOSS_STATE_DIR": "/absolute/path/to/workbench-state",
+        "BOSS_BASE_URL": "http://127.0.0.1:8771"
+      }
+    }
+  }
+}
