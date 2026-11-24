@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="referrer" content="no-referrer">
+  <title>BOSS 求职工作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>const API_TOKEN = __BOSS_API_TOKEN__;</script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到工作内容</a>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="identity">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div>
+          <div class="brand-name">BOSS 求职</div>
+          <div class="brand-caption">本地工作台</div>
+        </div>
+      </div>
+      <nav aria-label="工作区">
+        <button class="nav-link" type="button" data-page="jobs" aria-current="page">岗位库</button>
+        <button class="nav-link" type="button" data-page="batches">执行清单</button>
+        <button class="nav-link" type="button" data-page="activity">任务与活动</button>
+        <button class="nav-link" type="button" data-page="browser">BOSS 浏览器</button>
+        <button class="nav-link" type="button" data-page="settings">筛选与执行设置</button>
+      </nav>
+      <div class="sidebar-footer">
+        <span id="connection-state" class="connection" data-tone="neutral">正在连接本地服务</span>
+      </div>
+    </aside>
+
+    <main id="main" tabindex="-1">
+      <div class="statusbar">
+        <div class="system-state">
+          <button id="browser-shortcut" type="button" class="link-button system-link">
+            <span id="browser-dot" class="status-dot"></span>
+            <span id="browser-state">浏览器未打开</span>
+          </button>
+          <span class="status-divider" aria-hidden="true"></span>
+          <span id="run-state">正在读取任务状态…</span>
+        </div>
+        <div class="system-actions">
+          <button id="pause-button" type="button" class="button small" disabled>暂停执行</button>
+          <button id="refresh-button" type="button" class="button small">刷新</button>
+        </div>
+      </div>
+      <div class="workspace">
+        <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+        <section id="page-jobs" class="page" aria-labelledby="jobs-heading">
+          <header class="page-heading">
+            <div>
+              <h1 id="jobs-heading" tabindex="-1">岗位库</h1>
+              <p>按关键词筛选岗位。简历语义匹配暂不可用。</p>
+            </div>
+            <button id="collect-button" type="button" class="button primary" disabled>开始采集</button>
+          </header>
+          <div class="overview" aria-label="工作台概况">
+            <div><span>采集城市</span><strong id="active-cities">—</strong></div>
+            <div><span>岗位记录</span><strong id="job-count">—</strong></div>
+            <div><span>今日已用真实执行次数</span><strong id="quota">—</strong></div>
+          </div>
+          <section class="surface" aria-label="岗位列表">
+            <form id="job-filters" class="toolbar" role="search">
+              <label class="search-label">搜索已采集岗位
+                <input id="job-query" type="search" placeholder="搜索岗位、公司或职位描述" autocomplete="off">
+              </label>
+              <label>城市
+                <select id="job-city">
+                  <option value="">全部城市</option>
+                  <option value="杭州">杭州</option>
+                  <option value="上海">上海</option>
+                </select>
+              </label>
+              <span id="job-result-count" class="result-count"></span>
+            </form>
+            <div id="jobs-empty" class="empty">正在加载岗位…</div>
+            <div id="jobs-table-wrap" class="table-wrap" hidden>
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col" class="pick-col"><input id="select-visible" type="checkbox" aria-label="选择当前列表中的全部候选岗位"></th>
+                    <th scope="col">岗位 / 公司</th>
+                    <th scope="col">城市</th>
+                    <th scope="col">薪资 / 经验</th>
+                    <th scope="col">筛选依据 / 沟通状态</th>
+                  </tr>
+                </thead>
+                <tbody id="jobs-rows"></tbody>
+              </table>
+            </div>
+            <div id="selection-bar" class="selection-bar">
+              <span id="selection-count">已选 0 个岗位</span>
+              <div>
+                <button id="clear-selection" type="button" class="link-button" disabled>清空</button>
+                <button id="draft-button" type="button" class="button primary" disabled>创建执行清单</button>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section id="page-batches" class="page" aria-labelledby="batches-heading" hidden>
+          <header class="page-heading">
+            <div>
+              <h1 id="batches-heading" tabindex="-1">执行清单</h1>
+              <p>查看每批岗位快照、确认记录和逐岗位执行结果。</p>
+            </div>
+            <button type="button" class="button" data-goto="jobs">前往岗位库</button>
+          </header>
+          <section class="surface" aria-label="清单历史">
+            <div id="batches-empty" class="empty">正在加载清单…</div>
+            <div id="batches-table-wrap" class="table-wrap" hidden>
+              <table>
+                <thead><tr>
+                  <th scope="col">清单</th><th scope="col">动作</th><th scope="col">模式</th>
+                  <th scope="col">岗位数</th><th scope="col">状态</th><th scope="col">创建时间</th>
+                </tr></thead>
+                <tbody id="batches-rows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section id="page-activity" class="page" aria-labelledby="activity-heading" hidden>
+          <header class="page-heading">
+            <div>
+              <h1 id="activity-heading" tabindex="-1">任务与活动</h1>
+              <p>查看采集与执行进度，以及最近的服务事件。</p>
+            </div>
+          </header>
+          <section class="surface" aria-labelledby="tasks-heading">
+            <div class="surface-heading"><h2 id="tasks-heading">任务记录</h2></div>
+            <div id="tasks-empty" class="empty compact">正在加载任务…</div>
+            <div id="tasks-table-wrap" class="table-wrap" hidden>
+              <table>
+                <thead><tr><th scope="col">任务</th><th scope="col">状态</th><th scope="col">进度</th><th scope="col">创建时间</th></tr></thead>
+                <tbody id="tasks-rows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="surface" aria-labelledby="events-heading">
+            <div class="surface-heading"><h2 id="events-heading">最近事件</h2></div>
+            <div id="events-empty" class="empty compact">正在加载事件…</div>
+            <ul id="events-list" class="events-list" hidden></ul>
+          </section>
+        </section>
+
+        <section id="page-browser" class="page" aria-labelledby="browser-heading" hidden>
+          <header class="page-heading">
+            <div>
+              <h1 id="browser-heading" tabindex="-1">BOSS 浏览器</h1>
+              <p>在独立浏览器窗口中扫码登录或完成人工验证。</p>
+            </div>
+            <button id="browser-open" type="button" class="button primary">打开登录浏览器</button>
+          </header>
+          <section class="surface browser-panel" aria-label="浏览器状态">
+            <div class="surface-heading browser-toolbar">
+              <div>
+                <h2>浏览器状态 <span id="browser-badge" class="badge">未打开</span></h2>
+                <p id="browser-message">打开浏览器后，在弹出窗口中登录。</p>
+              </div>
+              <button id="screenshot-button" type="button" class="button" disabled>获取当前画面</button>
+            </div>
+            <div id="screenshot-empty" class="empty">获取画面后可在这里查看浏览器截图。</div>
+            <figure id="screenshot-frame" class="screenshot-frame" hidden>
+              <img id="browser-screenshot" alt="BOSS 登录浏览器的当前画面">
+              <figcaption id="screenshot-time"></figcaption>
+            </figure>
+          </section>
+          <p class="callout">真实 BOSS 的登录后采集、问候与附件发送仍待实际验证。</p>
+        </section>
+
+        <section id="page-settings" class="page" aria-labelledby="settings-heading" hidden>
+          <header class="page-heading">
+            <div>
+              <h1 id="settings-heading" tabindex="-1">筛选与执行设置</h1>
+              <p>设置采集范围、关键词和真实执行频率。</p>
+            </div>
+          </header>
+          <form id="settings-form" class="surface settings-form">
+            <fieldset id="settings-fields" disabled>
+              <legend>岗位采集</legend>
+              <fieldset class="cities">
+                <legend>城市</legend>
+                <label class="choice"><input type="checkbox" name="cities" value="杭州"> 杭州</label>
+                <label class="choice"><input type="checkbox" name="cities" value="上海"> 上海</label>
+              </fieldset>
+              <label>关键词
+                <textarea id="keywords" rows="4" required aria-describedby="keywords-help"></textarea>
+                <span id="keywords-help" class="hint">一行填写一个关键词，用于采集和筛选岗位。</span>
+              </label>
+              <label>排除公司
+                <textarea id="exclude-companies" rows="3" aria-describedby="companies-help"></textarea>
+                <span id="companies-help" class="hint">一行填写一个公司名称，留空则不按公司排除。</span>
+              </label>
+              <label>单批采集上限
+                <input id="collect-limit" type="number" min="1" max="100" step="1" required>
+              </label>
+            </fieldset>
+            <fieldset id="execution-fields" disabled>
+              <legend>真实执行</legend>
+              <div class="settings-grid">
+                <label>每日尝试上限
+                  <input id="daily-limit" type="number" min="1" max="100" step="1" required>
+                </label>
+                <label>动作间隔（秒）
+                  <input id="interval-seconds" type="number" min="10" max="3600" step="1" required>
+                </label>
+              </div>
+              <span class="hint">每日上限由本工作台控制，演练不计入真实执行次数。</span>
+            </fieldset>
+            <div class="form-footer">
+              <button id="settings-save" class="button primary" type="submit" disabled>保存设置</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="job-dialog" aria-labelledby="job-dialog-title" class="dialog">
+    <div class="dialog-head">
+      <div><h2 id="job-dialog-title"></h2><p id="job-dialog-company"></p></div>
+      <button type="button" class="button small close-dialog" data-close="job-dialog" autofocus>关闭</button>
+    </div>
+    <div id="job-dialog-content" class="dialog-body"></div>
+  </dialog>
+
+  <dialog id="draft-dialog" aria-labelledby="draft-dialog-title" class="dialog">
+    <div class="dialog-head">
+      <div><h2 id="draft-dialog-title">创建执行清单</h2><p id="draft-count"></p></div>
+      <button type="button" class="button small close-dialog" data-close="draft-dialog">关闭</button>
+    </div>
+    <form id="draft-form">
+      <div class="dialog-body draft-fields">
+        <div id="draft-notice" class="notice" role="alert" hidden></div>
+        <label>动作
+          <select id="draft-action" autofocus>
+            <option value="greet">发送自定义问候语</option>
+            <option value="start_chat">首次沟通（使用 BOSS 账号预设招呼）</option>
+            <option value="resume">发送已有附件简历</option>
+          </select>
+        </label>
+        <label id="message-field">问候语
+          <textarea id="draft-message" rows="4" maxlength="1000" required aria-describedby="message-help"></textarea>
+          <span id="message-help" class="hint">填写希望发给招聘者的完整消息。同一清单中的问候内容一致，仅在能安全输入自定义消息的会话中发送。</span>
+        </label>
+        <p id="start-chat-help" class="callout" hidden>点击「立即沟通」可能自动发送你在 BOSS 中设置的招呼。请先在 BOSS 确认当前设置。</p>
+        <label id="resume-field" hidden>BOSS 附件简历名称
+          <input id="draft-resume" type="text" maxlength="200" autocomplete="off" disabled aria-describedby="resume-help">
+          <span id="resume-help" class="hint">填写 BOSS 账号中已有附件的完整名称。</span>
+        </label>
+        <fieldset class="mode-field">
+          <legend>执行模式</legend>
+          <label class="mode-choice"><input type="radio" name="mode" value="dry_run" checked><span><strong>演练</strong><span>检查岗位和发送条件，不发送任何内容。</span></span></label>
+          <label class="mode-choice"><input type="radio" name="mode" value="live"><span><strong>真实执行</strong><span>通过检查后，向清单里的招聘者发送指定消息或附件。</span></span></label>
+        </fieldset>
+      </div>
+      <div class="dialog-footer">
+        <button type="button" class="button" data-close="draft-dialog">取消</button>
+        <button id="draft-submit" type="submit" class="button primary">生成清单并预览</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="batch-dialog" aria-labelledby="batch-dialog-title" class="dialog batch-dialog">
+    <div class="dialog-head">
+      <div><h2 id="batch-dialog-title">执行清单</h2><p id="batch-dialog-caption"></p></div>
+      <button type="button" class="button small close-dialog" data-close="batch-dialog" autofocus>关闭</button>
+    </div>
+    <div class="dialog-body">
+      <div id="batch-notice" class="notice" role="alert" hidden></div>
+      <div id="batch-details"></div>
+      <label id="live-ack-label" class="choice callout" hidden>
+        <input id="live-ack" type="checkbox">
+        <span>我已核对清单中的岗位、招聘者与发送内容，并同意对符合条件的岗位执行真实发送。</span>
+      </label>
+    </div>
+    <div id="batch-footer" class="dialog-footer">
+      <span id="batch-action-note" class="hint"></span>
+      <button id="batch-approve" type="button" class="button primary" hidden>确认清单</button>
+      <button id="batch-run" type="button" class="button primary" hidden>运行清单</button>
+    </div>
+  </dialog>
+</body>
+</html>
