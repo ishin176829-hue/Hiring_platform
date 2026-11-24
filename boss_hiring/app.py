@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import Config, SearchSettings
-from .matching import ProfileInput, ResumeInput, extract_resume, profile_fields, redact
+from .matching import MatchRunInput, ProfileInput, ResumeInput, extract_resume, profile_fields, redact, suggest_search
 from .service import Service
 from .store import Store
 
@@ -179,8 +179,15 @@ def create_app(state_dir=None, browser=None):
         return {"deleted": True}
 
     @app.post("/api/matching/run")
-    async def start_matching(body: Empty):
-        return {"task_id": service.start_matching()}
+    async def start_matching(body: MatchRunInput):
+        return {"task_id": service.start_matching(body.keywords)}
+
+    @app.post("/api/matching/suggestions")
+    async def search_suggestions(body: Empty):
+        profile = store.match_profile()
+        if not profile:
+            raise ValueError("请先保存简历")
+        return {"directions": await suggest_search(profile), "profile_version": profile["version"]}
 
     @app.get("/api/matching/latest")
     async def latest_matching():
