@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import suppress
 
+from .matching import ModelError, RANKING_VERSION, TIERS, assess_job, candidate_jobs
 from .store import ActionInterval, ChangedConstraints, DuplicateAttempt, QuotaExceeded, job_fingerprint
 
 
@@ -67,12 +68,65 @@ class Service:
         self.task = asyncio.create_task(self._collect(task_id))
         return task_id
 
+    def start_matching(self):
+        self._available()
+        profile = self.store.match_profile()
+        if not profile:
+            raise ValueError("请先在工作台填写并保存简历")
+        if not profile["external_consent"]:
+            raise ValueError("请先在工作台允许使用所配置的模型")
+        task_id = self.store.new_task("match")
+        self.active_id = task_id
+        self.task = asyncio.create_task(self._match(task_id, profile))
+        return task_id
+
+    async def _match(self, task_id, profile):
+        try:
+            settings = self.store.settings()
+            candidates = candidate_jobs(self.store.list_jobs(), profile, settings)
+            results, errors = [], []
+            consecutive_errors = 0
+            for job, pending in candidates:
+                current = self.store.match_profile()
+                if not current or current["version"] != profile["version"]:
+                    self.store.finish_task(task_id, "interrupted", "简历或偏好已更新，请重新匹配")
+                    return
+                fields = {key: job[key] for key in ("id", "title", "company", "city", "salary", "url", "collected_at", "contact_status")}
+                try:
+                    assessment = await assess_job(profile, job, pending)
+                except ModelError as exc:
+                    consecutive_errors += 1
+                    errors.append({"id": job["id"], "title": job["title"], "reason": str(exc)})
+                    if consecutive_errors >= 3 or str(exc).startswith("尚未配置"):
+                        break
+                    continue
+                consecutive_errors = 0
+                results.append({**fields, **assessment, "fingerprint": job_fingerprint(job)})
+            results.sort(key=lambda item: (-TIERS[item["tier"]], item["core_coverage"], item["bonus_hits"], item["collected_at"], item["id"]), reverse=True)
+            preferences = {key: profile[key] for key in ("cities", "min_salary_k", "outsourcing", "exclude_companies")}
+            result = {"scope": "existing", "rule_version": RANKING_VERSION, "jobs": results, "errors": errors,
+                      "preferences": preferences, "keywords": [], "candidate_count": len(candidates),
+                      "filters": {key: settings[key] for key in ("cities", "exclude_companies")},
+                      "unprocessed": len(candidates) - len(results) - len(errors)}
+            if not self.store.save_match(task_id, profile["version"], result):
+                self.store.finish_task(task_id, "interrupted", "简历或偏好已更新，请重新匹配")
+                return
+            failure = f"，{len(errors)} 条待重试" if errors else ""
+            state = "blocked" if errors and not results else "completed"
+            detail = f"匹配完成，{len(results)} 条岗位{failure}" if candidates else "目前没有符合条件的可匹配岗位"
+            self.store.finish_task(task_id, state, detail)
+        except asyncio.CancelledError:
+            self.store.finish_task(task_id, "interrupted", "简历匹配已中止")
+            raise
+        except Exception as exc:
+            self.store.finish_task(task_id, "blocked", self._error(exc))
+
     def pause(self):
         self.pause_generation += 1
         self.pause_event.set()
         self.store.set_paused(True)
         active = next((t for t in self.store.tasks() if t["id"] == self.active_id), None)
-        if active and active["kind"] == "collect" and self.task and not self.task.done():
+        if active and active["kind"] in {"collect", "match"} and self.task and not self.task.done():
             self.task.cancel()
 
     async def _collect(self, task_id):

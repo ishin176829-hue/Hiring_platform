@@ -94,6 +94,8 @@ class Store:
                     kind TEXT NOT NULL, detail TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, kind TEXT NOT NULL,
                     status TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS match_runs (id TEXT PRIMARY KEY, profile_version TEXT NOT NULL,
+                    data TEXT NOT NULL, created_at TEXT NOT NULL);
             """)
 
     @contextmanager
@@ -117,6 +119,49 @@ class Store:
         with self.connection() as conn:
             row = conn.execute("SELECT value FROM meta WHERE key='settings'").fetchone()
         return SearchSettings.model_validate_json(row[0]).model_dump() if row else SearchSettings().model_dump()
+
+    @staticmethod
+    def _profile(conn):
+        row = conn.execute("SELECT value FROM meta WHERE key='match_profile'").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def match_profile(self):
+        with self.connection() as conn:
+            return self._profile(conn)
+
+    def save_profile(self, data):
+        profile = {**data, "version": uuid.uuid4().hex}
+        with self.connection(True) as conn:
+            conn.execute("INSERT OR REPLACE INTO meta VALUES ('match_profile',?)", (json_text(profile),))
+        return profile
+
+    def delete_profile(self):
+        with self.connection(True) as conn:
+            conn.execute("DELETE FROM match_runs")
+            conn.execute("DELETE FROM meta WHERE key='match_profile'")
+
+    def save_match(self, task_id, profile_version, result):
+        with self.connection(True) as conn:
+            profile = self._profile(conn)
+            if not profile or profile["version"] != profile_version:
+                return False
+            conn.execute("INSERT INTO match_runs VALUES (?,?,?,?)", (task_id, profile_version, json_text(result), now()))
+        return True
+
+    def latest_match(self):
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM match_runs ORDER BY rowid DESC LIMIT 1").fetchone()
+            if not row:
+                return None
+            profile = self._profile(conn)
+            result = json.loads(row["data"])
+            for item in result["jobs"]:
+                job = conn.execute("SELECT data FROM jobs WHERE id=?", (item["id"],)).fetchone()
+                item["stale"] = not job or job_fingerprint(json.loads(job[0])) != item["fingerprint"]
+        settings = self.settings()
+        stale = not profile or profile["version"] != row["profile_version"] or any(
+            settings.get(key) != value for key, value in result.get("filters", {}).items())
+        return {**result, "id": row["id"], "created_at": row["created_at"], "stale": stale}
 
     def update_settings(self, values):
         validated = SearchSettings.model_validate(values).model_dump()

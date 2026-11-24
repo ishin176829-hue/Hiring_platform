@@ -13,7 +13,7 @@
 - 中断后将未确认的发送记录为“待核对”，不自动重发。发起沟通与附件发送分别记录。
 - CLI 与 OpenMausBot stdio MCP 管理入口；管理入口不提供替你确认名单的工具。
 
-本版关键词过滤**不等于简历语义匹配**；没有简历时不生成个人经历或虚构匹配分数。
+「简历匹配」可对已有岗位排序。启动服务前设置 `OPENAI_API_KEY` 和 `BOSS_MATCH_MODEL`，选择支持 JSON 输出的 Responses API 模型。在工作台粘贴并核对简历，设置偏好，再选择是否允许模型处理脱敏后的简历和岗位文本。原文可在工作台删除。[Responses API 文档](https://developers.openai.com/api/reference/resources/responses/methods/create)
 
 ## 运行
 
