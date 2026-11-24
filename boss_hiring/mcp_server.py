@@ -29,6 +29,19 @@ async def collect_jobs() -> dict[str, Any]:
 
 
 @mcp.tool()
+async def start_resume_match(keywords: Annotated[list[str], Field(min_length=1, max_length=20)] | None = None) -> dict[str, Any]:
+    """用工作台已保存且允许匹配的简历排序已有岗位。仅当用户明确要求重新采集时传入已确认的搜索词。返回匹配任务 ID。"""
+    body = {"keywords": keywords} if keywords is not None else None
+    return await asyncio.to_thread(api_request, "POST", "matching/run", body=body)
+
+
+@mcp.tool()
+async def get_resume_matches(limit: Annotated[int, Field(strict=True, ge=1, le=50)] = 10) -> dict[str, Any]:
+    """查询最新匹配任务和推荐摘要。需要核对简历原文或确认清单时，打开返回的工作台。"""
+    return await asyncio.to_thread(api_request, "GET", "matching/summary", query={"limit": limit})
+
+
+@mcp.tool()
 async def list_batches() -> list[dict[str, Any]]:
     """查询候选清单及其确认和执行状态。"""
     return await asyncio.to_thread(api_request, "GET", "batches")

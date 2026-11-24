@@ -170,6 +170,8 @@ async def test_mcp_stdio_exposes_only_management_and_surfaces_api_errors(api):
             "get_status": ({}, "GET", "/api/status"),
             "list_jobs": ({"city": "杭州"}, "GET", "/api/jobs?city=%E6%9D%AD%E5%B7%9E"),
             "collect_jobs": ({}, "POST", "/api/collect"),
+            "start_resume_match": ({}, "POST", "/api/matching/run"),
+            "get_resume_matches": ({"limit": 5}, "GET", "/api/matching/summary?limit=5"),
             "list_batches": ({}, "GET", "/api/batches"),
             "run_approved_batch": ({"batch_id": 7}, "POST", "/api/batches/7/run"),
             "pause_worker": ({}, "POST", "/api/pause"),
@@ -186,3 +188,6 @@ async def test_mcp_stdio_exposes_only_management_and_surfaces_api_errors(api):
         assert unapproved.isError
         assert "清单未获确认" in unapproved.content[0].text
         assert TOKEN not in unapproved.content[0].text
+        requested = await session.call_tool("start_resume_match", {"keywords": ["工作流工程师"]})
+        assert not requested.isError
+        assert api[-1] == ("POST", "/api/matching/run", {"keywords": ["工作流工程师"]})

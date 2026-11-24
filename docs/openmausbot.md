@@ -12,6 +12,8 @@
 | 查询工作台状态 | `get_status` | `boss-hiring status` |
 | 打开登录浏览器 | `open_login` | `boss-hiring login` |
 | 按当前设置排队采集 | `collect_jobs` | `boss-hiring collect` |
+| 发起简历匹配 | `start_resume_match` | 工作台「简历匹配」 |
+| 查看匹配进度与摘要 | `get_resume_matches` | 工作台「简历匹配」 |
 | 查看已采集岗位 | `list_jobs` | `boss-hiring jobs --city 上海 --q Agent` |
 | 查看清单及确认状态 | `list_batches` | `boss-hiring batches` |
 | 执行已确认的清单 | `run_approved_batch` | `boss-hiring run-batch 1` |
@@ -22,3 +24,5 @@
 以上命令可使用 `.venv/bin/boss-hiring` 执行。查询和任务命令默认输出 JSON，加 `--json` 可使用单行格式。需要指定服务的数据目录时，可设置 `BOSS_STATE_DIR` 或在子命令后使用 `--state-dir`。令牌从运行服务生成的 `api-token` 文件读取。
 
 `run_approved_batch` 按网页确认时固定的模式、动作和候选岗位执行。采集和执行提交成功时返回任务编号，完成情况可通过状态、清单和事件查看。解除暂停后，再调用一次执行工具即可继续已确认清单的未处理项。
+
+使用简历匹配前，在工作台保存简历和偏好并选择是否允许发送脱敏片段到配置的模型。MausBot 的匹配摘要只展示岗位、推荐等级和待核对条件。简历原文与匹配依据在工作台查看。

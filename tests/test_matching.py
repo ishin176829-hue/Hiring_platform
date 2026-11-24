@@ -68,6 +68,10 @@ def test_match_existing_jobs_routes_validate_quotes_and_do_not_send(tmp_path, mo
         assert result["scope"] == "existing"
         assert [row["tier"] for row in result["jobs"]] == ["priority"]
         assert result["jobs"][0]["evidence"][0]["resume_excerpt"] == resume
+        summary = client.get("/api/matching/summary?limit=1").json()
+        assert summary["task"]["id"] == task_id
+        assert summary["result"]["jobs"][0]["id"] == result["jobs"][0]["id"]
+        assert resume not in str(summary) and "resume_excerpt" not in str(summary)
         assert len(result["errors"]) == 1
         assert len(profiles) == 3
         assert client.get("/api/batches").json() == []
