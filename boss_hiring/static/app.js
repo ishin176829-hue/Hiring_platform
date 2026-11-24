@@ -4,7 +4,7 @@ const byId = id => document.getElementById(id);
 const all = selector => Array.from(document.querySelectorAll(selector));
 const selected = new Set();
 const rendered = new Map();
-const pageNames = ['jobs', 'batches', 'activity', 'browser', 'settings'];
+const pageNames = ['jobs', 'matching', 'batches', 'activity', 'browser', 'settings'];
 const actionNames = {
   greet: '发送自定义问候语',
   start_chat: '首次沟通（使用 BOSS 账号预设招呼）',
@@ -39,7 +39,7 @@ const statusTones = {
   needs_review: 'attention', blocked: 'attention', failed: 'bad',
 };
 const taskNames = {
-  collect: '岗位采集', batch: '执行清单', run_batch: '执行清单', execute: '执行清单',
+  collect: '岗位采集', match: '简历匹配', batch: '执行清单', run_batch: '执行清单', execute: '执行清单',
 };
 const eventNames = {
   jobs: '岗位更新', batch: '清单创建', approval: '清单确认', item: '岗位处理结果',
@@ -172,6 +172,7 @@ function updateControls() {
       browserStatus !== 'ready' ? '请先打开 BOSS 浏览器并登录。' : '';
   byId('browser-open').disabled = unavailable || taskRunning;
   byId('screenshot-button').disabled = unavailable || browserStatus === 'closed';
+  byId('match-run').disabled = unavailable || taskRunning || isPaused;
   byId('settings-save').disabled = unavailable || !settingsInitialized || !settingsDirty;
   byId('draft-button').disabled = unavailable || !selected.size;
   byId('draft-submit').disabled = unavailable;
@@ -528,6 +529,7 @@ function renderActivity(tasks, events) {
 
 function visiblePageData() {
   if (currentPage === 'jobs') return loadJobs();
+  if (currentPage === 'matching') return loadMatching();
   if (currentPage === 'batches') return loadBatches();
   if (currentPage === 'activity') {
     return Promise.all([api('/tasks'), api('/events?limit=100')]).then(([tasks, events]) => renderActivity(tasks, events));
@@ -745,6 +747,124 @@ byId('settings-form').addEventListener('submit', event => {
   event.preventDefault();
   mutate(saveSettings);
 });
+const resumeFields = {skills: '技能', projects: '项目', duties: '职责', outcomes: '成果', experience: '工作年限', education: '学历'};
+const matchTier = {priority: '优先看', consider: '可考虑', verify: '需核对'};
+const evidenceState = {supported: '有证据', partial: '部分相关', unknown: '待确认', mismatch: '明确不符'};
+const evidenceKind = {core: '核心职责', must: '必备条件', bonus: '加分项'};
+let matchReady = false;
+let matchDirty = false;
+
+function fillMatchProfile(profile) {
+  byId('match-profile').reset();
+  byId('match-resume').value = profile?.text ?? '';
+  byId('match-consent').checked = Boolean(profile?.external_consent);
+  byId('match-exclusions').value = (profile?.exclude_companies ?? []).join('\n');
+  byId('match-salary').value = profile?.min_salary_k ?? '';
+  byId('match-outsourcing').value = profile?.outsourcing ?? 'verify';
+  for (const checkbox of all('[name="match-cities"]')) {
+    checkbox.checked = (profile?.cities ?? ['杭州', '上海']).includes(checkbox.value);
+  }
+  for (const name of Object.keys(resumeFields)) {
+    byId(`match-field-${name}`).value = (profile?.fields?.[name] ?? []).map(row => row.value).join('\n');
+  }
+  byId('match-fields').open = Boolean(profile);
+  matchReady = true;
+  matchDirty = false;
+}
+
+async function saveMatchProfile() {
+  const profile = await api('/matching/profile', {method: 'PUT', body: {
+    text: byId('match-resume').value,
+    external_consent: byId('match-consent').checked,
+    fields: Object.fromEntries(Object.keys(resumeFields).map(name => [name, lines(`match-field-${name}`)])),
+    cities: all('[name="match-cities"]:checked').map(input => input.value),
+    exclude_companies: lines('match-exclusions'),
+    min_salary_k: byId('match-salary').value ? byId('match-salary').valueAsNumber : null,
+    outsourcing: byId('match-outsourcing').value,
+  }});
+  fillMatchProfile(profile);
+  const names = Object.entries(profile.fields).flatMap(([key, rows]) => rows.some(row => row.source === 'user') ? [resumeFields[key]] : []);
+  const note = names.length ? `。${names.join('、')}中未匹配原文的片段已记为用户补充` : '';
+  showNotice(`简历与偏好已保存${note}`, 'good');
+  await loadMatching();
+}
+
+function renderMatching(result) {
+  const signature = JSON.stringify(result);
+  if (rendered.get('matching') === signature) return;
+  rendered.set('matching', signature);
+  const rows = [];
+  for (const job of result?.jobs ?? []) {
+    const detail = el('details');
+    detail.append(el('summary', `${matchTier[job.tier]} · ${job.title} · ${job.company} · ${job.city || '城市待核对'} · ${job.salary || '薪资待核对'}`));
+    const source = el('a', 'BOSS 岗位原页');
+    source.href = job.url;
+    source.target = '_blank';
+    source.rel = 'noopener noreferrer';
+    detail.append(source, el('p', `采集于 ${formatTime(job.collected_at)} · ${statusLabel(job.contact_status)}`));
+    if (job.stale) detail.append(el('p', '岗位有变更，请重新匹配。'));
+    for (const check of job.checks) detail.append(el('p', check));
+    for (const item of job.evidence) {
+      detail.append(el('p', `${evidenceKind[item.kind]} · ${evidenceState[item.status]}：${item.jd_excerpt}`));
+      if (item.resume_excerpt) detail.append(el('blockquote', item.resume_excerpt));
+    }
+    rows.push(detail);
+  }
+  for (const failure of result?.errors ?? []) rows.push(el('p', `${failure.title} · ${failure.reason}`));
+  if (result?.unprocessed) rows.push(el('p', `还有 ${result.unprocessed} 条未评估，恢复后可重新匹配。`));
+  byId('match-results').replaceChildren(...rows);
+  const stale = result?.stale ? '简历或偏好有变更，请重新匹配。' : '';
+  text('match-summary', result ? `${stale}基于已有岗位，${result.jobs.length} 条推荐 · ${formatTime(result.created_at)}` : '保存简历后即可开始匹配。');
+}
+
+async function loadMatching() {
+  if (!matchReady && !matchDirty) {
+    const profile = await api('/matching/profile');
+    if (!matchDirty && !matchReady) fillMatchProfile(profile);
+  }
+  renderMatching(await api('/matching/latest'));
+}
+
+function setupMatching() {
+  for (const [key, label] of Object.entries(resumeFields)) {
+    const field = el('label', `${label}原文，每行一个片段`);
+    const input = el('textarea');
+    input.id = `match-field-${key}`;
+    input.rows = 2;
+    field.append(input);
+    byId('match-field-list').append(field);
+  }
+  byId('match-profile').addEventListener('input', () => { matchDirty = true; });
+  byId('match-profile').addEventListener('submit', event => {
+    event.preventDefault();
+    mutate(saveMatchProfile);
+  });
+  byId('match-extract').addEventListener('click', () => mutate(async () => {
+    const result = await post('/matching/extract', {text: byId('match-resume').value, external_consent: byId('match-consent').checked});
+    for (const name of Object.keys(resumeFields)) byId(`match-field-${name}`).value = (result.fields[name] ?? []).join('\n');
+    matchDirty = true;
+    byId('match-fields').open = true;
+    showNotice('请核对并保存提取结果。', 'good');
+  }));
+  byId('match-run').addEventListener('click', () => mutate(async () => {
+    if (!matchReady || matchDirty) throw new Error('请先保存当前简历与偏好。');
+    await post('/matching/run');
+    showNotice('匹配任务已提交，可在「任务与活动」查看进度。');
+    await loadStatus();
+  }));
+  byId('match-delete').addEventListener('click', () => {
+    if (!window.confirm('删除本机简历及关联推荐？')) return;
+    mutate(async () => {
+      await api('/matching/profile', {method: 'DELETE'});
+      fillMatchProfile(null);
+      renderMatching(null);
+      showNotice('简历与推荐已删除。', 'good');
+    });
+  });
+}
+
+// Match controls share the same refresh and mutation lifecycle.
+setupMatching();
 window.addEventListener('pagehide', clearScreenshot);
 
 refresh();

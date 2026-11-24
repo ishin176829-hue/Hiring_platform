@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import Config, SearchSettings
+from .matching import ProfileInput, ResumeInput, extract_resume, profile_fields, redact
 from .service import Service
 from .store import Store
 
@@ -159,6 +160,31 @@ def create_app(state_dir=None, browser=None):
     @app.post("/api/jobs/import")
     async def import_jobs(body: ImportInput):
         return {"imported": store.upsert_jobs(body.jobs)}
+
+    @app.post("/api/matching/extract")
+    async def extract(body: ResumeInput):
+        return {"fields": await extract_resume(body)}
+
+    @app.get("/api/matching/profile")
+    async def profile():
+        return store.match_profile()
+
+    @app.put("/api/matching/profile")
+    async def save_profile(body: ProfileInput):
+        return store.save_profile({**body.model_dump(), "fields": profile_fields(redact(body.text), body.fields)})
+
+    @app.delete("/api/matching/profile")
+    async def delete_profile():
+        store.delete_profile()
+        return {"deleted": True}
+
+    @app.post("/api/matching/run")
+    async def start_matching(body: Empty):
+        return {"task_id": service.start_matching()}
+
+    @app.get("/api/matching/latest")
+    async def latest_matching():
+        return store.latest_match()
 
     @app.get("/api/tasks")
     async def tasks():

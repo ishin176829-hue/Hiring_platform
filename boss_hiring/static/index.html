@@ -23,6 +23,7 @@
       </div>
       <nav aria-label="工作区">
         <button class="nav-link" type="button" data-page="jobs" aria-current="page">岗位库</button>
+        <button class="nav-link" type="button" data-page="matching">简历匹配</button>
         <button class="nav-link" type="button" data-page="batches">执行清单</button>
         <button class="nav-link" type="button" data-page="activity">任务与活动</button>
         <button class="nav-link" type="button" data-page="browser">BOSS 浏览器</button>
@@ -55,7 +56,7 @@
           <header class="page-heading">
             <div>
               <h1 id="jobs-heading" tabindex="-1">岗位库</h1>
-              <p>按关键词筛选岗位。简历语义匹配暂不可用。</p>
+              <p>按关键词查看已采集岗位。</p>
             </div>
             <button id="collect-button" type="button" class="button primary" disabled>开始采集</button>
           </header>
@@ -100,6 +101,41 @@
                 <button id="draft-button" type="button" class="button primary" disabled>创建执行清单</button>
               </div>
             </div>
+          </section>
+        </section>
+
+        <section id="page-matching" class="page" aria-labelledby="matching-heading" hidden>
+          <header class="page-heading"><h1 id="matching-heading" tabindex="-1">简历匹配</h1></header>
+          <form id="match-profile" class="surface settings-form">
+            <fieldset>
+              <legend>简历</legend>
+              <label>粘贴简历文本<textarea id="match-resume" rows="7" maxlength="24000" required autocomplete="off" spellcheck="false"></textarea></label>
+              <label class="choice"><input type="checkbox" id="match-consent"> 允许向配置的 OpenAI 模型发送脱敏简历和岗位片段</label>
+              <p class="hint">请先移除姓名、联系方式及其他个人信息。原文保存在本机。</p>
+              <button type="button" id="match-extract" class="button">提取经历</button>
+              <details id="match-fields"><summary>核对提取结果</summary><div id="match-field-list"></div></details>
+            </fieldset>
+            <fieldset>
+              <legend>求职偏好</legend>
+              <fieldset class="cities"><legend>城市</legend>
+                <label class="choice"><input type="checkbox" name="match-cities" value="杭州" checked> 杭州</label>
+                <label class="choice"><input type="checkbox" name="match-cities" value="上海" checked> 上海</label>
+              </fieldset>
+              <label>排除公司，每行一个<textarea id="match-exclusions" rows="3"></textarea></label>
+              <div class="settings-grid">
+                <label>最低月薪（K）<input type="number" id="match-salary" min="0.1" max="1000" step="0.1"></label>
+                <label>外包<select id="match-outsourcing"><option value="verify">待确认</option><option value="accept">接受</option><option value="exclude">排除</option></select></label>
+              </div>
+            </fieldset>
+            <div class="form-footer">
+              <button type="submit" class="button">保存简历与偏好</button>
+              <button type="button" id="match-run" class="button primary">匹配现有岗位</button>
+              <button type="button" id="match-delete" class="button">删除简历与推荐</button>
+            </div>
+          </form>
+          <section class="surface" aria-label="简历匹配结果">
+            <header class="surface-heading"><h2>推荐岗位</h2><p id="match-summary" aria-live="polite"></p></header>
+            <div class="surface-heading" id="match-results"></div>
           </section>
         </section>
 
